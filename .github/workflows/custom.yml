@@ -1,0 +1,133 @@
+#
+# Copyright 2013-2020 the original author or authors from the JHipster project.
+#
+# This file is part of the JHipster project, see https://www.jhipster.tech/
+# for more information.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+name: Custom build
+on:
+  workflow_dispatch:
+    inputs:
+      jdl:
+        description: 'JDL file(s)'
+      mavenProfiles:
+        description: 'Maven profiles'
+      springProfiles:
+        description: 'Spring profiles'
+        default: 'testcontainers'
+      war:
+        description: 'To generate war instead of jar set 1'
+env:
+  JHI_LIB_REPO: https://github.com/jhipster/jhipster-bom.git
+  JHI_LIB_BRANCH: main
+  JHI_GEN_REPO: https://github.com/jhipster/generator-jhipster.git
+  JHI_GEN_BRANCH: main
+  SPRING_OUTPUT_ANSI_ENABLED: ALWAYS
+  SPRING_JPA_SHOW_SQL: false
+  JHI_DISABLE_WEBPACK_LOGS: true
+  JHI_HOME: ${{ github.workspace }}/generator-jhipster
+  JHI_FOLDER_APP: ${{ github.workspace }}/app
+  JHI_SCRIPTS: ${{ github.workspace }}/generator-jhipster/test-integration/scripts
+  NG_CLI_ANALYTICS: 'false'
+  FORCE_COLOR: 1
+jobs:
+  applications:
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}/app
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        node_version: [12.18.3]
+        os: [ubuntu-20.04]
+    env:
+      JHI_PROFILE: ${{ github.event.inputs.mavenProfiles }}
+      JHI_WAR: ${{ github.event.inputs.war }}
+      SPRING_PROFILES_ACTIVE: ${{ github.event.inputs.springProfiles }}
+    steps:
+      #----------------------------------------------------------------------
+      # Install all tools and check configuration
+      #----------------------------------------------------------------------
+      - name: 'SETUP: Checkout generator-jhipster'
+        uses: actions/checkout@v2
+        with:
+          repository: jhipster/generator-jhipster
+          path: generator-jhipster
+      - name: 'SETUP: Create required structure'
+        run: |
+          mkdir app
+        working-directory: ${{ github.workspace }}
+      - uses: actions/setup-node@v2.1.2
+        with:
+          node-version: ${{ matrix.node_version }}
+      - uses: actions/setup-java@v1
+        with:
+          java-version: '11.x'
+      - name: 'ENV: display variables'
+        run: $JHI_SCRIPTS/01-display-configuration.sh
+      - name: 'TOOLS: configure tools installed by the system'
+        run: $JHI_SCRIPTS/03-system.sh
+      - name: 'TOOLS: configure git'
+        run: $JHI_SCRIPTS/04-git-config.sh
+      #----------------------------------------------------------------------
+      # Install JHipster and generate project+entities
+      #----------------------------------------------------------------------
+      - name: 'GENERATION: install JHipster'
+        run: $JHI_SCRIPTS/10-install-jhipster.sh
+      - name: 'GENERATION: project'
+        run: jhipster jdl ${{ github.event.inputs.jdl }} --no-insight --with-entities --skip-jhipster-dependencies
+      - name: 'GENERATION: replace version in generated project'
+        run: $JHI_SCRIPTS/13-replace-version-generated-project.sh
+      - name: 'GENERATION: jhipster info'
+        run: $JHI_SCRIPTS/14-jhipster-info.sh
+      #----------------------------------------------------------------------
+      # Launch tests
+      #----------------------------------------------------------------------
+      - name: 'TESTS: backend'
+        id: backend
+        run: npm run ci:backend:test
+      - name: 'TESTS: frontend'
+        run: npm run ci:frontend:test
+      - name: 'TESTS: packaging'
+        run: npm run ci:e2e:package --if-present
+      - name: 'TESTS: Start docker-compose containers for e2e tests'
+        run: npm run ci:e2e:prepare --if-present
+      - name: 'E2E: Run'
+        id: e2e
+        run: npm run ci:e2e:run --if-present
+      - name: 'E2E: Teardown'
+        if: always()
+        run: npm run ci:e2e:teardown --if-present
+      - name: 'BACKEND: Store failure logs'
+        uses: actions/upload-artifact@v2
+        if: always() && steps.backend.outcome == 'failure'
+        with:
+          name: log-${{ github.event.inputs.jdl }}
+          path: ${{ github.workspace }}/app/build/test-results/**/*.xml
+      - name: 'E2E: Store docker logs'
+        uses: actions/upload-artifact@v2
+        if: always() && steps.e2e.outcome == 'failure'
+        with:
+          name: docker-${{ github.event.inputs.jdl }}
+          path: /var/lib/docker/containers/**/*-json.log
+      - name: 'E2E: Store failure screenshots'
+        uses: actions/upload-artifact@v2
+        if: always() && steps.e2e.outcome == 'failure'
+        with:
+          name: screenshots-${{ github.event.inputs.jdl }}
+          path: ${{ github.workspace }}/app/*/cypress/screenshots
