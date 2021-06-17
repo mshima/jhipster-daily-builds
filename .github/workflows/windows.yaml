@@ -123,8 +123,6 @@ jobs:
           java-version: ${{ steps.setup.outputs.java-version }}
       - name: 'TOOLS: configure git'
         run: $JHI_SCRIPTS/04-git-config.sh
-      - name: 'Copy samples'
-        run: cp -R "$JHI_HOME/test-integration/samples/.jhipster" "$JHI_SAMPLES"
       #----------------------------------------------------------------------
       # Install JHipster and generate project+entities
       #----------------------------------------------------------------------
